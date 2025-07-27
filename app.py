@@ -1,8 +1,3 @@
-@app.route("/", methods=["GET"])
-def home():
-    return "¡Flask está vivo y responde!"
-
-
 from flask import Flask, request, jsonify
 import requests
 import os
@@ -20,6 +15,10 @@ import re
 # import numpy as np
 
 app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def home():
+    return "¡Flask está vivo y responde!"
 
 # ====== CONFIGURACIÓN ======
 # Airtable
