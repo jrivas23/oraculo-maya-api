@@ -2,23 +2,16 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import datetime
-import re
-
-# (Opcional: para Drive/RAG)
-# from googleapiclient.discovery import build
-# from google.oauth2 import service_account
-# import pdfplumber
-# import docx
-# import io
-# import openai
-# import faiss
-# import numpy as np
 
 app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "¡Flask está vivo y responde!"
+    return jsonify({
+        "status": "ok",
+        "message": "¡Flask está vivo y responde!",
+        "how_to": "Consulta /fechas_gregorianas?fecha=2/05/2002 o /oraculo_tzolkin?kin=224"
+    })
 
 # ====== CONFIGURACIÓN ======
 # Airtable
@@ -43,12 +36,6 @@ FIELD_ANALOGO = "fldbFsqbkQqCsSiyY"
 FIELD_ANTIPODA = "fldDRTvvc75s5DIA1"
 FIELD_OCULTO = "fldRO16Xf91ouVIsv"
 
-# (Opcional para Google Drive/RAG)
-# SERVICE_ACCOUNT_FILE = 'credentials.json'
-# SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-# FOLDER_ID = 'TU_FOLDER_ID'
-# openai.api_key = "TU_OPENAI_API_KEY"
-
 # ========== UTILIDAD: NORMALIZAR FECHA ==========
 def normalizar_fecha(fecha_input):
     fecha_input = fecha_input.strip().replace("-", "/")
@@ -58,19 +45,26 @@ def normalizar_fecha(fecha_input):
             return f"{d.day}/{d.month:02d}/{d.year}"
         except Exception:
             pass
-    # Si no pudo parsear, regresa la entrada original
     return fecha_input
+
+# ========== RESPUESTA BONITA ==========
+def api_response(status, message, data=None):
+    return jsonify({
+        "status": status,
+        "message": message,
+        "data": data
+    })
 
 # ========== ENDPOINT: BUSCAR KIN CENTRAL POR FECHA ==========
 @app.route("/fechas_gregorianas", methods=["GET"])
 def obtener_kin_por_fecha():
-    # Permite ?fecha= o ?date=
     user_fecha = request.args.get("fecha") or request.args.get("date")
     if not user_fecha:
-        return jsonify({
-            "error": "Debes enviar la fecha como parámetro (?fecha=). "
-                     "Formatos aceptados: 2/05/2002, 02/05/2002, 2002-05-02, etc."
-        }), 400
+        return api_response(
+            "error",
+            "Debes enviar la fecha como parámetro (?fecha=). Ejemplo: 2/05/2002",
+            None
+        ), 400
     fecha = normalizar_fecha(user_fecha)
     params = {
         "filterByFormula": f"{{{FIELD_FECHA}}}='{fecha}'",
@@ -78,14 +72,30 @@ def obtener_kin_por_fecha():
     }
     headers = {"Authorization": AIRTABLE_TOKEN}
     r = requests.get(f"{AIRTABLE_API}/{TABLE_FECHAS}", params=params, headers=headers)
-    return r.json(), r.status_code
+    records = r.json().get("records", [])
+    if not records:
+        return api_response(
+            "not_found",
+            f"No se encontró Kin para la fecha {fecha}.",
+            None
+        ), 404
+    dato = records[0]["fields"]
+    return api_response(
+        "success",
+        f"Kin encontrado para la fecha {fecha}.",
+        dato
+    ), 200
 
 # ========== ENDPOINT: BUSCAR ORÁCULO POR KIN ==========
 @app.route("/oraculo_tzolkin", methods=["GET"])
 def obtener_oraculo_por_kin():
     kin = request.args.get("kin")
     if not kin:
-        return jsonify({"error": "Debes enviar el kin como parámetro (?kin=)"}), 400
+        return api_response(
+            "error",
+            "Debes enviar el kin como parámetro (?kin=). Ejemplo: 224",
+            None
+        ), 400
     params = {
         "filterByFormula": f"{{{FIELD_KIN_ORACULO}}}={kin}",
         "fields[]": [
@@ -95,27 +105,42 @@ def obtener_oraculo_por_kin():
     }
     headers = {"Authorization": AIRTABLE_TOKEN}
     r = requests.get(f"{AIRTABLE_API}/{TABLE_ORACULO}", params=params, headers=headers)
-    return r.json(), r.status_code
+    records = r.json().get("records", [])
+    if not records:
+        return api_response(
+            "not_found",
+            f"No se encontró oráculo para Kin {kin}.",
+            None
+        ), 404
+    dato = records[0]["fields"]
+    return api_response(
+        "success",
+        f"Oráculo encontrado para Kin {kin}.",
+        dato
+    ), 200
 
-# =======================
-# AQUÍ VAN LOS ENDPOINTS PARA GOOGLE DRIVE Y RAG
-# (Déjalos listos para agregar el código cuando quieras)
-# =======================
+# ========== GOOGLE DRIVE & RAG: PLACEHOLDER ==========
 
 @app.route('/drive/index', methods=['GET'])
 def listar_documentos():
-    # --- Código de Google Drive aquí ---
-    return jsonify({"error": "Función no implementada todavía"}), 501
+    return api_response("not_implemented", "Función no implementada todavía.", None), 501
 
 @app.route('/drive/read', methods=['POST'])
 def leer_documento():
-    # --- Código de Google Drive aquí ---
-    return jsonify({"error": "Función no implementada todavía"}), 501
+    return api_response("not_implemented", "Función no implementada todavía.", None), 501
 
 @app.route('/drive/search', methods=['POST'])
 def buscar_contenido():
-    # --- Código de búsqueda semántica aquí ---
-    return jsonify({"error": "Función no implementada todavía"}), 501
+    return api_response("not_implemented", "Función no implementada todavía.", None), 501
+
+# ========== ERROR HANDLER BONITO ==========
+@app.errorhandler(404)
+def not_found(e):
+    return api_response("error", "Ruta no encontrada (404).", None), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    return api_response("error", "Error interno del servidor (500).", None), 500
 
 # =======================
 
