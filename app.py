@@ -29,19 +29,19 @@ TABLE_ORACULO = "tbl3XcK3LRqYEetIO"
 AIRTABLE_API = f"https://api.airtable.com/v0/{BASE_ID}"
 
 # CAMPOS DE FECHAS_GREGORIANAS
-FIELD_FECHA = "fechafldHzpCRrHNc6EYq5"
-FIELD_KIN_CENTRAL = "Kin Centralfld6z8Dipfe2t6rVJ"
+FIELD_FECHA = "fldHzpCRrHNc6EYq5"
+FIELD_KIN_CENTRAL = "fld6z8Dipfe2t6rVJ"
 
 # CAMPOS DE ORACULO_TZOLKIN
-FIELD_IDKIN = "idkinfldTBvI5SXibJHk3L"
-FIELD_KIN_ORACULO = "Kin CentralfldGGijwtgKdX1kNf"
-FIELD_SELLO = "Sello Centralfld2hwTEDuot1z01o"
-FIELD_NUM_SELLO = "numero sellofldf4lEQV00vX8QGp"
-FIELD_TONO = "Tono CentralfldYfpMc0Gj2oNlbz"
-FIELD_GUIA = "GuíafldXSdBjPXL61bf9v"
-FIELD_ANALOGO = "AnálogofldbFsqbkQqCsSiyY"
-FIELD_ANTIPODA = "AntípodafldDRTvvc75s5DIA1"
-FIELD_OCULTO = "OcultofldRO16Xf91ouVIsv"
+FIELD_IDKIN = "fldTBvI5SXibJHk3L"
+FIELD_KIN_ORACULO = "fldGGijwtgKdX1kNf"
+FIELD_SELLO = "fld2hwTEDuot1z01o"
+FIELD_NUM_SELLO = "fldf4lEQV00vX8QGp"
+FIELD_TONO = "fldYfpMc0Gj2oNlbz"
+FIELD_GUIA = "fldXSdBjPXL61bf9v"
+FIELD_ANALOGO = "fldbFsqbkQqCsSiyY"
+FIELD_ANTIPODA = "fldDRTvvc75s5DIA1"
+FIELD_OCULTO = "fldRO16Xf91ouVIsv"
 
 # (Opcional para Google Drive/RAG)
 # SERVICE_ACCOUNT_FILE = 'credentials.json'
