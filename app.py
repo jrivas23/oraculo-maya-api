@@ -12,6 +12,12 @@ import faiss
 import numpy as np
 import io
 
+SERVICE_ACCOUNT_FILE = 'credentials.json'
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+creds = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+)
+
 app = Flask(__name__)
 
 # ====== CONFIGURACIÓN GENERAL ======
