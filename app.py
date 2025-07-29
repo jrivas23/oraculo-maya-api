@@ -327,6 +327,9 @@ def internal_error(e):
     return api_response("error", "Error interno del servidor (500).", None), 500
 
 # ========================= MAIN =========================
+@app.route('/drive/service_account_email', methods=['GET'])
+def ver_email_service_account():
+    return jsonify({"service_account_email": creds.service_account_email})
 
 if __name__ == '__main__':
     app.run(debug=True)
