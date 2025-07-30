@@ -6,7 +6,6 @@ import io
 
 from flask import Flask, request, jsonify
 
-# ==== GOOGLE DRIVE Y RAG ====
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import pdfplumber
@@ -15,14 +14,13 @@ import openai
 import faiss
 import numpy as np
 
-# ==== ENVIRONMENT GOOGLE ====
+# ENVIRONMENT GOOGLE
 os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
 os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
 
-# ==== FLASK ====
 app = Flask(__name__)
 
-# ==== AIRTABLE CONFIG ====
+# AIRTABLE CONFIG
 AIRTABLE_TOKEN = os.environ.get("AIRTABLE_TOKEN") or "Bearer patZO88B42WhnVmCl.c09adf5b589ce3ae34cbf769d1d2b412cb9ba0da6ccede1cc91ccd2a5842495c"
 BASE_ID = "appe2SiWhVOuEZJEt"
 TABLE_FECHAS = "tblFtf5eMJaDoEykE"
@@ -41,21 +39,20 @@ FIELD_ANALOGO = "fldbFsqbkQqCsSiyY"
 FIELD_ANTIPODA = "fldDRTvvc75s5DIA1"
 FIELD_OCULTO = "fldRO16Xf91ouVIsv"
 
-# ==== GOOGLE DRIVE ====
+# GOOGLE DRIVE
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 FOLDER_ID = os.environ.get("FOLDER_ID") or "1tsz9j9ZODDvaOzUQMLlAn2z-H3B2ozjo"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
-# ==== GLOBALS INDEX Y LOCK ====
+# GLOBALS
 drive_index = []
 index_lock = threading.Lock()
 faiss_index = None
 docs = []
 doc_map = {}
 
-# ==== UTILITY: NORMALIZAR FECHA ====
 def normalizar_fecha(fecha_input):
     fecha_input = fecha_input.strip().replace("-", "/")
     for fmt in ["%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]:
@@ -66,7 +63,6 @@ def normalizar_fecha(fecha_input):
             pass
     return fecha_input
 
-# ==== RESPUESTA BONITA ====
 def api_response(status, message, data=None):
     return jsonify({
         "status": status,
@@ -74,7 +70,6 @@ def api_response(status, message, data=None):
         "data": data
     })
 
-# ==== ENDPOINT HOME ====
 @app.route("/", methods=["GET"])
 def home():
     return api_response(
@@ -92,7 +87,6 @@ def home():
         }
     )
 
-# ==== ENDPOINT: BUSCAR KIN CENTRAL POR FECHA ====
 @app.route("/fechas_gregorianas", methods=["GET"])
 def obtener_kin_por_fecha():
     user_fecha = request.args.get("fecha") or request.args.get("date")
@@ -111,7 +105,6 @@ def obtener_kin_por_fecha():
     dato = records[0]["fields"]
     return api_response("success", f"Kin encontrado para la fecha {fecha}.", dato), 200
 
-# ==== ENDPOINT: BUSCAR ORÁCULO POR KIN ====
 @app.route("/oraculo_tzolkin", methods=["GET"])
 def obtener_oraculo_por_kin():
     kin = request.args.get("kin")
@@ -132,7 +125,7 @@ def obtener_oraculo_por_kin():
     dato = records[0]["fields"]
     return api_response("success", f"Oráculo encontrado para Kin {kin}.", dato), 200
 
-# ==== RECURSIVO: LISTAR ARCHIVOS Y SUBCARPETAS ====
+# ==== DRIVE (INCLUYE SUBCARPETAS) ====
 def listar_todos_los_archivos(service, parent_id):
     archivos = []
     page_token = None
@@ -158,11 +151,12 @@ def cargar_indice_drive():
         creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
         archivos = listar_todos_los_archivos(service, FOLDER_ID)
+        print("Archivos encontrados:", len(archivos))
         if archivos:
             with index_lock:
                 drive_index.clear()
                 drive_index.extend(archivos)
-            print(f"Índice cargado con {len(archivos)} archivos (incluyendo subcarpetas)")
+            print(f"Índice cargado con {len(archivos)} archivos (incluye subcarpetas)")
         else:
             print("No se encontraron archivos en el folder.")
     except Exception as e:
@@ -177,7 +171,6 @@ iniciar_carga_indice_thread()
 
 @app.route('/drive/index', methods=['GET'])
 def listar_documentos():
-    global drive_index, index_lock
     with index_lock:
         docs_list = list(drive_index)
     return api_response("success", "Índice actual de Google Drive cargado.", docs_list), 200
@@ -228,7 +221,7 @@ def leer_documento():
                         page_text = page.extract_text()
                         if page_text:
                             text += page_text
-        elif 'wordprocessingml' in mime_type:  # DOCX
+        elif 'wordprocessingml' in mime_type:
             doc = docx.Document(fh)
             for para in doc.paragraphs:
                 text += para.text + "\n"
@@ -244,17 +237,15 @@ def leer_documento():
     except Exception as e:
         return api_response("error", f"Error al leer documento: {str(e)}", None), 500
 
-# ========= RAG FAISS INDEX (CARGA BAJO DEMANDA) =========
 def cargar_faiss_y_embeddings():
     global faiss_index, docs, doc_map
-    if faiss_index is not None and len(docs) > 0:
-        return
+    docs = []
+    embeddings = []
+    faiss_index = None
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     drive_service = build('drive', 'v3', credentials=creds)
     with index_lock:
         files = list(drive_index)
-    docs = []
-    embeddings = []
     max_files = 20
     for i, doc in enumerate(files[:max_files]):
         file_id = doc["id"]
@@ -315,7 +306,6 @@ def service_account_email():
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     return jsonify({"service_account_email": creds.service_account_email})
 
-# ========== ERROR HANDLER BONITO ==========
 @app.errorhandler(404)
 def not_found(e):
     return api_response("error", "Ruta no encontrada (404).", None), 404
@@ -324,6 +314,5 @@ def not_found(e):
 def internal_error(e):
     return api_response("error", "Error interno del servidor (500).", None), 500
 
-# ========== MAIN ==========
-if __name__ == '_main_':
+if __name__ == '__main__':
     app.run(debug=True)
