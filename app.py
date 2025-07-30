@@ -1,12 +1,12 @@
 import os
-os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
-os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
+import threading
+import datetime
+import requests
+import io
 
 from flask import Flask, request, jsonify
-import requests
-import datetime
-import threading
 
+# ==== GOOGLE DRIVE Y RAG ====
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import pdfplumber
@@ -14,12 +14,15 @@ import docx
 import openai
 import faiss
 import numpy as np
-import io
 
-# ========== CONFIG FLASK ==========
+# ==== ENVIRONMENT GOOGLE ====
+os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
+os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
+
+# ==== FLASK ====
 app = Flask(_name_)
 
-# ========== CONFIGURACIÓN AIRTABLE ==========
+# ==== AIRTABLE CONFIG ====
 AIRTABLE_TOKEN = os.environ.get("AIRTABLE_TOKEN") or "Bearer patZO88B42WhnVmCl.c09adf5b589ce3ae34cbf769d1d2b412cb9ba0da6ccede1cc91ccd2a5842495c"
 BASE_ID = "appe2SiWhVOuEZJEt"
 TABLE_FECHAS = "tblFtf5eMJaDoEykE"
@@ -38,14 +41,21 @@ FIELD_ANALOGO = "fldbFsqbkQqCsSiyY"
 FIELD_ANTIPODA = "fldDRTvvc75s5DIA1"
 FIELD_OCULTO = "fldRO16Xf91ouVIsv"
 
-# ========== CONFIGURACIÓN GOOGLE DRIVE/RAG ==========
+# ==== GOOGLE DRIVE ====
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 FOLDER_ID = os.environ.get("FOLDER_ID") or "1tsz9j9ZODDvaOzUQMLlAn2z-H3B2ozjo"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
-# ========== UTILIDAD: NORMALIZAR FECHA ==========
+# ==== GLOBALS INDEX Y LOCK ====
+drive_index = []
+index_lock = threading.Lock()
+faiss_index = None
+docs = []
+doc_map = {}
+
+# ==== UTILITY: NORMALIZAR FECHA ====
 def normalizar_fecha(fecha_input):
     fecha_input = fecha_input.strip().replace("-", "/")
     for fmt in ["%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]:
@@ -56,7 +66,7 @@ def normalizar_fecha(fecha_input):
             pass
     return fecha_input
 
-# ========== RESPUESTA BONITA ==========
+# ==== RESPUESTA BONITA ====
 def api_response(status, message, data=None):
     return jsonify({
         "status": status,
@@ -64,7 +74,7 @@ def api_response(status, message, data=None):
         "data": data
     })
 
-# ========== ENDPOINT HOME ==========
+# ==== ENDPOINT HOME ====
 @app.route("/", methods=["GET"])
 def home():
     return api_response(
@@ -82,16 +92,12 @@ def home():
         }
     )
 
-# ========== ENDPOINT: BUSCAR KIN CENTRAL POR FECHA ==========
+# ==== ENDPOINT: BUSCAR KIN CENTRAL POR FECHA ====
 @app.route("/fechas_gregorianas", methods=["GET"])
 def obtener_kin_por_fecha():
     user_fecha = request.args.get("fecha") or request.args.get("date")
     if not user_fecha:
-        return api_response(
-            "error",
-            "Debes enviar la fecha como parámetro (?fecha=). Ejemplo: 2/05/2002",
-            None
-        ), 400
+        return api_response("error", "Debes enviar la fecha como parámetro (?fecha=). Ejemplo: 2/05/2002", None), 400
     fecha = normalizar_fecha(user_fecha)
     params = {
         "filterByFormula": f"{{{FIELD_FECHA}}}='{fecha}'",
@@ -101,28 +107,16 @@ def obtener_kin_por_fecha():
     r = requests.get(f"{AIRTABLE_API}/{TABLE_FECHAS}", params=params, headers=headers)
     records = r.json().get("records", [])
     if not records:
-        return api_response(
-            "not_found",
-            f"No se encontró Kin para la fecha {fecha}.",
-            None
-        ), 404
+        return api_response("not_found", f"No se encontró Kin para la fecha {fecha}.", None), 404
     dato = records[0]["fields"]
-    return api_response(
-        "success",
-        f"Kin encontrado para la fecha {fecha}.",
-        dato
-    ), 200
+    return api_response("success", f"Kin encontrado para la fecha {fecha}.", dato), 200
 
-# ========== ENDPOINT: BUSCAR ORÁCULO POR KIN ==========
+# ==== ENDPOINT: BUSCAR ORÁCULO POR KIN ====
 @app.route("/oraculo_tzolkin", methods=["GET"])
 def obtener_oraculo_por_kin():
     kin = request.args.get("kin")
     if not kin:
-        return api_response(
-            "error",
-            "Debes enviar el kin como parámetro (?kin=). Ejemplo: 224",
-            None
-        ), 400
+        return api_response("error", "Debes enviar el kin como parámetro (?kin=). Ejemplo: 224", None), 400
     params = {
         "filterByFormula": f"{{{FIELD_KIN_ORACULO}}}={kin}",
         "fields[]": [
@@ -134,27 +128,12 @@ def obtener_oraculo_por_kin():
     r = requests.get(f"{AIRTABLE_API}/{TABLE_ORACULO}", params=params, headers=headers)
     records = r.json().get("records", [])
     if not records:
-        return api_response(
-            "not_found",
-            f"No se encontró oráculo para Kin {kin}.",
-            None
-        ), 404
+        return api_response("not_found", f"No se encontró oráculo para Kin {kin}.", None), 404
     dato = records[0]["fields"]
-    return api_response(
-        "success",
-        f"Oráculo encontrado para Kin {kin}.",
-        dato
-    ), 200
+    return api_response("success", f"Oráculo encontrado para Kin {kin}.", dato), 200
 
-# ====== GOOGLE DRIVE & RAG INDEXING (THREAD SAFE, RECURSIVO) ======
-drive_index = []
-index_lock = threading.Lock()
-faiss_index = None
-docs = []
-doc_map = {}
-
+# ==== RECURSIVO: LISTAR ARCHIVOS Y SUBCARPETAS ====
 def listar_todos_los_archivos(service, parent_id):
-    """Busca archivos en el folder y subcarpetas recursivamente."""
     archivos = []
     page_token = None
     while True:
@@ -174,7 +153,6 @@ def listar_todos_los_archivos(service, parent_id):
     return archivos
 
 def cargar_indice_drive():
-    """Carga todos los archivos de un folder de Drive (con subcarpetas) en el índice."""
     global drive_index
     try:
         creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
@@ -184,7 +162,7 @@ def cargar_indice_drive():
             with index_lock:
                 drive_index.clear()
                 drive_index.extend(archivos)
-            print(f"Index cargado con {len(archivos)} archivos")
+            print(f"Índice cargado con {len(archivos)} archivos (incluyendo subcarpetas)")
         else:
             print("No se encontraron archivos en el folder.")
     except Exception as e:
@@ -194,10 +172,12 @@ def iniciar_carga_indice_thread():
     thread = threading.Thread(target=cargar_indice_drive)
     thread.start()
 
+# Carga el índice al iniciar el server
 iniciar_carga_indice_thread()
 
 @app.route('/drive/index', methods=['GET'])
 def listar_documentos():
+    global drive_index, index_lock
     with index_lock:
         docs_list = list(drive_index)
     return api_response("success", "Índice actual de Google Drive cargado.", docs_list), 200
@@ -330,7 +310,6 @@ def buscar_contenido():
     except Exception as e:
         return api_response("error", f"Error en la búsqueda semántica: {str(e)}", None), 500
 
-# ========== ENDPOINT DE PRUEBA PARA CORREO SERVICE ACCOUNT ==========
 @app.route('/drive/service_account_email', methods=['GET'])
 def service_account_email():
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
