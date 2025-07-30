@@ -159,7 +159,7 @@ doc_map = {}
 def cargar_indice_drive():
     global drive_index
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
+    service = build('drive', 'v3', credentials=creds, cache_discovery=False)
     archivos = []
 
     def listar_todo(folder_id):
@@ -217,7 +217,7 @@ def leer_documento():
 
     try:
         creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        drive_service = build('drive', 'v3', credentials=creds)
+        drive_service = build('drive', 'v3', credentials=creds, cache_discovery=False)
         file = drive_service.files().get(fileId=file_id, fields='name, mimeType').execute()
         name = file['name']
         mime_type = file['mimeType']
