@@ -1,10 +1,13 @@
+import os
+os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
+os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
+
 from flask import Flask, request, jsonify
 import requests
 import os
 import datetime
 import threading
-import os
-os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
+
 
 # Para Google Drive y RAG
 from googleapiclient.discovery import build
