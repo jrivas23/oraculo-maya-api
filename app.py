@@ -3,6 +3,8 @@ import requests
 import os
 import datetime
 import threading
+import os
+os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
 
 # Para Google Drive y RAG
 from googleapiclient.discovery import build
@@ -156,35 +158,42 @@ faiss_index = None
 docs = []
 doc_map = {}
 
-def cargar_indice_drive():
-    global drive_index
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+def listar_todos_los_archivos(service, parent_id):
+    """Busca archivos en el folder y todos los subfolders de manera recursiva."""
     archivos = []
+    page_token = None
+    while True:
+        response = service.files().list(
+            q=f"'{parent_id}' in parents and trashed=false",
+            fields="nextPageToken, files(id, name, mimeType, parents)",
+            pageToken=page_token
+        ).execute()
+        for file in response.get('files', []):
+            if file['mimeType'] == 'application/vnd.google-apps.folder':
+                # Recursivo: busca en subcarpetas
+                archivos += listar_todos_los_archivos(service, file['id'])
+            else:
+                archivos.append(file)
+        page_token = response.get('nextPageToken', None)
+        if page_token is None:
+            break
+    return archivos
 
-    def listar_todo(folder_id):
-        page_token = None
-        while True:
-            response = service.files().list(
-                q=f"'{folder_id}' in parents and trashed = false",
-                fields="nextPageToken, files(id, name, mimeType, parents)",
-                pageToken=page_token
-            ).execute()
-            files = response.get('files', [])
-            for f in files:
-                if f['mimeType'] == 'application/vnd.google-apps.folder':
-                    listar_todo(f['id'])
-                else:
-                    archivos.append(f)
-            page_token = response.get('nextPageToken', None)
-            if page_token is None:
-                break
+def cargar_indice_drive():
+    """Carga todos los archivos de un folder de Drive (con subcarpetas) en el índice."""
+    global drive_index
+    try:
+        creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+        archivos = listar_todos_los_archivos(service, FOLDER_ID)
+        # No borrar el índice si hay error; solo sobreescribir si hay éxito
+        if archivos:
+            with index_lock:
+                drive_index.clear()
+                drive_index.extend(archivos)
+    except Exception as e:
+        print("ERROR AL CARGAR INDICE:", str(e))
 
-    archivos.clear()
-    listar_todo(FOLDER_ID)
-    with index_lock:
-        drive_index.clear()
-        drive_index.extend(archivos)
 
 
 def iniciar_carga_indice_thread():
