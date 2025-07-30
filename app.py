@@ -4,10 +4,8 @@ os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
 
 from flask import Flask, request, jsonify
 import requests
-import os
 import datetime
 import threading
-
 
 # Para Google Drive y RAG
 from googleapiclient.discovery import build
@@ -29,11 +27,8 @@ TABLE_FECHAS = "tblFtf5eMJaDoEykE"
 TABLE_ORACULO = "tbl3XcK3LRqYEetIO"
 AIRTABLE_API = f"https://api.airtable.com/v0/{BASE_ID}"
 
-# CAMPOS DE FECHAS_GREGORIANAS
 FIELD_FECHA = "fldHzpCRrHNc6EYq5"
 FIELD_KIN_CENTRAL = "fld6z8Dipfe2t6rVJ"
-
-# CAMPOS DE ORACULO_TZOLKIN
 FIELD_IDKIN = "fldTBvI5SXibJHk3L"
 FIELD_KIN_ORACULO = "fldGGijwtgKdX1kNf"
 FIELD_SELLO = "fld2hwTEDuot1z01o"
@@ -47,11 +42,19 @@ FIELD_OCULTO = "fldRO16Xf91ouVIsv"
 # ========== CONFIGURACIÓN GOOGLE DRIVE/RAG ==========
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-FOLDER_ID = os.environ.get("FOLDER_ID") or "1tsz9j9ZODDvaOzUQMLlAn2z-H3B2ozjo"  # Aquí va tu FolderID real
+FOLDER_ID = os.environ.get("FOLDER_ID") or "1tsz9j9ZODDvaOzUQMLlAn2z-H3B2ozjo"  # tu FolderID real aquí
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
-# ========== UTILIDAD: NORMALIZAR FECHA ==========
+# ========== RESPUESTA BONITA ==========
+def api_response(status, message, data=None):
+    return jsonify({
+        "status": status,
+        "message": message,
+        "data": data
+    })
+
+# ========== NORMALIZAR FECHA ==========
 def normalizar_fecha(fecha_input):
     fecha_input = fecha_input.strip().replace("-", "/")
     for fmt in ["%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]:
@@ -62,15 +65,7 @@ def normalizar_fecha(fecha_input):
             pass
     return fecha_input
 
-# ========== RESPUESTA BONITA ==========
-def api_response(status, message, data=None):
-    return jsonify({
-        "status": status,
-        "message": message,
-        "data": data
-    })
-
-# ========== ENDPOINT HOME ==========
+# ========== ENDPOINTS AIRTABLE ==========
 @app.route("/", methods=["GET"])
 def home():
     return api_response(
@@ -88,7 +83,6 @@ def home():
         }
     )
 
-# ========== ENDPOINT: BUSCAR KIN CENTRAL POR FECHA ==========
 @app.route("/fechas_gregorianas", methods=["GET"])
 def obtener_kin_por_fecha():
     user_fecha = request.args.get("fecha") or request.args.get("date")
@@ -119,7 +113,6 @@ def obtener_kin_por_fecha():
         dato
     ), 200
 
-# ========== ENDPOINT: BUSCAR ORÁCULO POR KIN ==========
 @app.route("/oraculo_tzolkin", methods=["GET"])
 def obtener_oraculo_por_kin():
     kin = request.args.get("kin")
@@ -152,9 +145,7 @@ def obtener_oraculo_por_kin():
         dato
     ), 200
 
-# ====== GOOGLE DRIVE & RAG INDEXING (CON THREAD SEGURO) ======
-
-# Variables globales para el índice y lock
+# ====== GOOGLE DRIVE & RAG INDEXING (SUBFOLDERS, THREAD SAFE, SIN CACHE DISCOVERY) ======
 drive_index = []
 index_lock = threading.Lock()
 faiss_index = None
@@ -162,7 +153,6 @@ docs = []
 doc_map = {}
 
 def listar_todos_los_archivos(service, parent_id):
-    """Busca archivos en el folder y todos los subfolders de manera recursiva."""
     archivos = []
     page_token = None
     while True:
@@ -173,7 +163,6 @@ def listar_todos_los_archivos(service, parent_id):
         ).execute()
         for file in response.get('files', []):
             if file['mimeType'] == 'application/vnd.google-apps.folder':
-                # Recursivo: busca en subcarpetas
                 archivos += listar_todos_los_archivos(service, file['id'])
             else:
                 archivos.append(file)
@@ -183,13 +172,11 @@ def listar_todos_los_archivos(service, parent_id):
     return archivos
 
 def cargar_indice_drive():
-    """Carga todos los archivos de un folder de Drive (con subcarpetas) en el índice."""
     global drive_index
     try:
         creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
         archivos = listar_todos_los_archivos(service, FOLDER_ID)
-        # No borrar el índice si hay error; solo sobreescribir si hay éxito
         if archivos:
             with index_lock:
                 drive_index.clear()
@@ -197,13 +184,10 @@ def cargar_indice_drive():
     except Exception as e:
         print("ERROR AL CARGAR INDICE:", str(e))
 
-
-
 def iniciar_carga_indice_thread():
     thread = threading.Thread(target=cargar_indice_drive)
     thread.start()
 
-# Al iniciar el server, carga el índice de Drive
 iniciar_carga_indice_thread()
 
 @app.route('/drive/index', methods=['GET'])
@@ -277,20 +261,17 @@ def leer_documento():
 # ========= RAG FAISS INDEX (CARGA BAJO DEMANDA) =========
 def cargar_faiss_y_embeddings():
     global faiss_index, docs, doc_map
-    # Si ya existe el índice y docs, no volver a cargar
     if faiss_index is not None and len(docs) > 0:
         return
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    drive_service = build('drive', 'v3', credentials=creds)
+    drive_service = build('drive', 'v3', credentials=creds, cache_discovery=False)
     with index_lock:
         files = list(drive_index)
     docs = []
     embeddings = []
-    # Limitar cantidad de archivos para no saturar memoria
     max_files = 20
     for i, doc in enumerate(files[:max_files]):
         file_id = doc["id"]
-        # Si no se ha leído antes, lo lee
         if file_id not in doc_map:
             req = drive_service.files().get_media(fileId=file_id)
             fh = io.BytesIO()
@@ -315,14 +296,11 @@ def cargar_faiss_y_embeddings():
                 text = fh.read().decode("utf-8")
             doc_map[file_id] = text
         text = doc_map[file_id]
-        # Chunks
         chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
         for chunk in chunks:
             docs.append(chunk)
-            # Embedding para chunk (OpenAI)
             emb = openai.Embedding.create(input=chunk, model="text-embedding-ada-002")['data'][0]['embedding']
             embeddings.append(emb)
-    # Crea el índice FAISS
     if embeddings:
         dim = len(embeddings[0])
         faiss_index = faiss.IndexFlatL2(dim)
@@ -335,7 +313,7 @@ def buscar_contenido():
     if not query:
         return api_response("error", "Debes indicar 'query' a buscar.", None), 400
     try:
-        cargar_faiss_y_embeddings()  # Carga si no existe
+        cargar_faiss_y_embeddings()
         emb = openai.Embedding.create(input=query, model="text-embedding-ada-002")['data'][0]['embedding']
         D, I = faiss_index.search(np.array([emb], dtype=np.float32), k=3)
         resultados = [docs[i] for i in I[0] if i < len(docs)]
@@ -346,7 +324,7 @@ def buscar_contenido():
     except Exception as e:
         return api_response("error", f"Error en la búsqueda semántica: {str(e)}", None), 500
 
-# ========= ENDPOINT DE PRUEBA PARA CORREO SERVICE ACCOUNT =========
+# ========== ENDPOINT DE PRUEBA PARA CORREO SERVICE ACCOUNT ==========
 @app.route('/drive/service_account_email', methods=['GET'])
 def service_account_email():
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
