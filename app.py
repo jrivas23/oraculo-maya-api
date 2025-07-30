@@ -20,7 +20,7 @@ os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
 os.environ["GOOGLE_API_USE_DISCOVERY_CACHE"] = "false"
 
 # ==== FLASK ====
-app = Flask(_name_)
+app = Flask(__name__)
 
 # ==== AIRTABLE CONFIG ====
 AIRTABLE_TOKEN = os.environ.get("AIRTABLE_TOKEN") or "Bearer patZO88B42WhnVmCl.c09adf5b589ce3ae34cbf769d1d2b412cb9ba0da6ccede1cc91ccd2a5842495c"
