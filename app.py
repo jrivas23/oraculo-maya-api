@@ -325,5 +325,5 @@ def internal_error(e):
     return api_response("error", "Error interno del servidor (500).", None), 500
 
 # ========== MAIN ==========
-if _name_ == '_main_':
+if __name__ == '_main_':
     app.run(debug=True)
