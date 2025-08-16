@@ -1,0 +1,8 @@
+# Ignorar archivos de entorno y credenciales
+.env
+credentials.json
+rag_index_state.json
+
+# Ignorar carpetas de Python
+__pycache__/
+*.pyc
