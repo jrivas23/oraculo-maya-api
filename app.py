@@ -67,8 +67,13 @@ class Config:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
     EMBEDDING_MODEL = "models/embedding-001"
     GENERATION_MODEL = "gemini-1.5-flash"
+    # ## MEJORA: Nuevas variables para la "bóveda" del índice en Google Cloud Storage
     GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
-    GCS_BLOB_NAME = "rag_index_state.json"
+    
+    # ## MEJORA: Nombres de los archivos del cerebro desarmado
+    GCS_BLOB_NAME_METADATA = "rag_metadata.json"
+    GCS_BLOB_NAME_FAISS = "faiss_index.bin"
+    GCS_BLOB_NAME_CHUNKS = "doc_chunks.json"
 
     # --- Configuración de la Aplicación ---
     TIMEZONE = pytz.timezone(os.environ.get("TIMEZONE", "America/Bogota"))
@@ -186,16 +191,35 @@ def _download_index_from_gcs():
         print(f"Error al descargar el índice desde GCS: {e}")
         return False
 # ... (sin cambios en esta sección)
-def _load_rag_state():
+def _load_metadata():
+    path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_METADATA"])
     try:
-        with open(app.config["RAG_STATE_FILE"], 'r') as f:
+        with open(path, 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"files": {}, "embeddings": [], "chunks": [], "chunk_map": []}
+        return {"files": {}}
 
-def _save_rag_state(state):
-    with open(app.config["RAG_STATE_FILE"], 'w') as f:
-        json.dump(state, f, indent=2)
+def _save_metadata(metadata):
+    path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_METADATA"])
+    with open(path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+def _download_from_gcs(blob_name, destination_path):
+    if not app.config["GCS_BUCKET_NAME"]: return False
+    try:
+        creds = service_account.Credentials.from_service_account_file(app.config['SERVICE_ACCOUNT_FILE'], scopes=app.config['SCOPES'])
+        storage_client = storage.Client(credentials=creds)
+        bucket = storage_client.bucket(app.config["GCS_BUCKET_NAME"])
+        blob = bucket.blob(blob_name)
+        if blob.exists():
+            blob.download_to_filename(destination_path)
+            print(f"  -> ¡Éxito! Archivo '{blob_name}' descargado desde la bóveda.")
+            return True
+        return False
+    except Exception as e:
+        print(f"Error al descargar '{blob_name}' desde GCS: {e}")
+        return False
+
 
 def _get_drive_service():
     try:
@@ -290,6 +314,7 @@ def get_embedding_with_retries(chunk, task_type, max_retries=5):
     return None
 
 def background_intelligent_sync():
+    global faiss_index, doc_chunks, chunk_to_file_id
     print("Iniciando sincronización inteligente del índice RAG...")
      # ## MEJORA: Lógica de arranque profesional
     # 1. Comprobar si el cerebro ya existe localmente (en el disco de Render)
@@ -300,7 +325,26 @@ def background_intelligent_sync():
     service = _get_drive_service()
     if not service: return
 
-    rag_state = _load_rag_state()
+    # ## MEJORA: Lógica de arranque profesional con cerebro desarmado
+    # 1. Comprobar si el cerebro ya existe localmente
+    metadata_path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_METADATA"])
+    faiss_path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_FAISS"])
+    chunks_path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_CHUNKS"])
+
+    if not all(os.path.exists(p) for p in [metadata_path, faiss_path, chunks_path]):
+        print("  -> No se encontró un cerebro local completo. Intentando descargar desde la bóveda...")
+        _download_from_gcs(app.config["GCS_BLOB_NAME_METADATA"], metadata_path)
+        _download_from_gcs(app.config["GCS_BLOB_NAME_FAISS"], faiss_path)
+        _download_from_gcs(app.config["GCS_BLOB_NAME_CHUNKS"], chunks_path)
+
+    # Cargar el índice FAISS en memoria (esto es eficiente)
+    global faiss_index
+    if os.path.exists(faiss_path) and faiss_index is None:
+        try:
+            faiss_index = faiss.read_index(faiss_path)
+            print(f"Índice FAISS con {faiss_index.ntotal} vectores cargado en memoria.")
+        except Exception as e:
+            print(f"Error al cargar el índice FAISS: {e}")
     processed_files = rag_state.get("files", {})
     
     all_found_files = _listar_archivos_recursivamente(service, app.config['FOLDER_ID'])
@@ -330,7 +374,7 @@ def background_intelligent_sync():
     if not files_to_add_or_update and not deleted_ids:
         print("Sincronización finalizada. No se encontraron cambios.")
         with index_lock:
-            global faiss_index, doc_chunks, chunk_to_file_id
+
             if faiss_index is None and rag_state["embeddings"]:
                 embeddings = np.array(rag_state["embeddings"], dtype=np.float32)
                 if embeddings.size > 0:
@@ -741,7 +785,14 @@ def rag_search_endpoint():
         emb = get_embedding_with_retries(query, task_type="RETRIEVAL_QUERY")
         if emb:
             _, I = faiss_index.search(np.array([emb], dtype=np.float32), k=3)
-            resultados = [doc_chunks[i] for i in I[0]]
+            
+            # ## MEJORA: Se leen solo los chunks necesarios del archivo en disco.
+            # Esto evita cargar los 667MB en memoria.
+            chunks_path = os.path.join(app.config["DATA_DIR"], app.config["GCS_BLOB_NAME_CHUNKS"])
+            with open(chunks_path, 'r') as f:
+                all_chunks = json.load(f)
+            
+            resultados = [all_chunks[i] for i in I[0]]
             return api_response("success", "Resultados de búsqueda semántica.", {"query": query, "results": resultados})
         else:
             return api_response("error", "No se pudo generar el embedding para la búsqueda."), 500
